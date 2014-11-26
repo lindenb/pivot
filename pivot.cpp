@@ -22,12 +22,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include <string.h>
+#include <cstring>
 #include <unistd.h>
 #include <getopt.h>
-#include <errno.h>
-#include "pivot.h"
+#include <cerrno>
+#include "pivot.hh"
 #include "githash.h"
+
+using namespace std;
 
 #ifdef XXXXX
 #define DEF_VECTOR(T,name) T* name;size_t name##_size 
@@ -205,90 +207,89 @@ static int ArchetypeCompare(
 	}
 #endif
 
-void* _safeMalloc(const char* fname,int line, size_t size)
+
+class _StringType:public DataType
 	{
-	void * ptr=malloc(size);
-	if(ptr==NULL)
-		{
-		DIE_FAILURE("Out of memory \"%s\":%d  N=%ld.\n",
-			fname,line,size
-			);
-		}
-	return ptr;
+	public:
+		virtual void parse(Scalar& v,const char* s,size_t len)
+			{
+			v.s=new char[len+1];
+			strncpy(v.s,s,len);
+			}
+		virtual bool compare(const Scalar& a,const Scalar& b)
+			{
+			return strcmp(a.s,b.s)<0;
+			}
+		virtual void dispose(Scalar& v)
+			{
+			delete[] v.s;
+			}
+	};
+static DataType* TYPE_STRING = new  _StringType;
+
+
+class _DoubleType:public DataType
+	{
+	public:
+		virtual void parse(Scalar& v,const char* s,size_t len)
+			{
+			char* p2;
+			v.f=strtod(s,&p2);
+			while(isspace(*p2)) ++p2;
+			if(p2< s+len) cerr << "boum";
+			}
+		virtual bool compare(const Scalar& a,const Scalar& b)
+			{
+			return a.f < b.f ;
+			}
+		virtual void dispose(Scalar& v)
+			{
+			}
+	};
+static DataType* TYPE_DOUBLE = new  _DoubleType;
+
+
+
+class _LongType:public DataType
+	{
+	public:
+		virtual void parse(Scalar& v,const char* s,size_t len)
+			{
+			char* p2;
+			v.d=strtol(s,10,&p2);
+			while(isspace(*p2)) ++p2;
+			if(p2< s+len) cerr << "boum";
+			}
+		virtual bool compare(const Scalar& a,const Scalar& b)
+			{
+			return a.d < b.d ;
+			}
+		virtual void dispose(Scalar& v)
+			{
+			}
+	};
+static DataType* TYPE_LONG = new  _LongType;
+
+Archetype::Archetype():values(0)
+	{
 	}
 
-void* _safeCalloc(const char* fname,int line, size_t n,size_t size)
+Archetype::~Archetype()
 	{
-	void * ptr=calloc(n,size);
-	if(ptr==NULL)
-		{
-		DIE_FAILURE("Out of memory \"%s\":%d N=%ld*%ld.\n",
-			fname,line,n,size
-			);
-		}
-	return ptr;
-	}
+	if(values!=0) delete[] values;
+	}	
 
-void* _safeRealloc(const char* fname,int line, void* ptr,size_t size)
-	{
-	ptr=realloc(ptr,size);
-	if(ptr==NULL)
-		{
-		DIE_FAILURE("Out of memory \"%s\":%d N=%ld\n",
-			fname,line,size
-			);
-		}
-	return ptr;
-	}
 
-static char* readLine(FILE* in)
-	{
-	size_t len=0UL;
-	char* s=NULL;
-	int c;
-	if(feof(in)) return NULL;
-	s=safeMalloc(1);
-	while((c=fgetc(in))!=-1 && c!='\n')
-		{
-		s=safeRealloc(s,sizeof(char*)*(len+2));
-		s[len++]=c;
-		}
-	if(len==0 && feof(in)) { free(s); return NULL;}
-	s[len]=0;
-	return s;
-	}
-	
-
-static void parseKeys(ColumnKeyListPtr keyList, const char* arg)
+void ColumnKeyList::parse(const char* arg)
 	{
 	char* p=(char*)arg;
 	while(*p!=0)
 		{
-		char* p2;
-		ColumnKeyPtr key=NULL;
-		keyList->keys=(ColumnKeyPtr)safeRealloc(keyList->keys,sizeof(ColumnKey)*(keyList->count+1));
-		key=&keyList->keys[keyList->count ];
-		keyList->count++;
+		ColumnKey key;
+		p=key.parse(p);
 		
-		key->order=1;
-		if(*p=='+') ++p;
-		else if(*p=='-')  {key->order=-1;++p;}
+		this->keys.push_back(key);	
 		
-		key->column_index = strtoul(p,&p2,10);
-		if( key->column_index < 1)
-			{
-			fprintf(stderr,"BAD COLUMN INDEX in %s.\n",arg);
-			exit(EXIT_FAILURE);
-			}
-		key->column_index--;
-		
-		p=p2;
-		
-		if( key->column_index > keyList->max_column_index)
-			{
-			keyList->max_column_index =  key->column_index;
-			}
-			
 		if(*p==0) break;
 		if(*p==',')
 			{
@@ -299,34 +300,81 @@ static void parseKeys(ColumnKeyListPtr keyList, const char* arg)
 		exit(EXIT_FAILURE);
 		}
 	}
-
-static size_t lower_bound(ArchetypeListPtr archetypes,ArchetypePtr archetype,const ColumnKeyListPtr columnKeyList)
+		
+char* ColumnKey::parse(const char* arg)
 	{
-	return 0UL;
+	char* p2;
+	char* p=(char*)arg;
+	this->order=1;
+	this->data_type = TYPE_STRING;
+	if(*p=='+') ++p;
+	else if(*p=='-')  {this->order=-1;++p;}
+	
+	this->column_index = strtoul(p,&p2,10);
+	if( this->column_index < 1)
+		{
+		fprintf(stderr,"BAD COLUMN INDEX in %s.\n",arg);
+		exit(EXIT_FAILURE);
+		}
+	this->column_index--;
+	return (char*)p2;
 	}
 
-static void usage(int argc,char** argv)
+void Pivot::readData(std::istream& in)
 	{
-	fprintf(stderr,"\n\n%s\nAuthor: Pierre Lindenbaum PhD\nGit-Hash: "
+	size_t nLine=0;
+	std::string line;
+	std::vector<size_t> tokens;
+	while(getline(in,line,'\n'))
+		{
+		size_t i;
+		tokens.clear();
+		for(i=0;i< line.size();++i)
+			{
+			if(line[i]!='\t') continue;
+			tokens.push_back(i); 
+			}
+		tokens.push_back(line.size()); 
+		
+		
+		for(int side=0;side<2;++side)
+			{
+			ColumnKeyList& columns=(side==0?this->leftcols:this->topcols);
+			Archetype arch;
+			arch.values = new Scalar[columns.keys.size()];
+			for(size_t i=0;i< columns.keys.size();++i)
+				{
+				if( tokens.size()<= columns.keys[i].column_index)
+					{
+					cerr << "BOUM" << endl;
+					exit(-1);
+					}
+				columns.keys[i].data_type->parse(arch.values[i],&line[tokens[ columns.keys[i].column_index]],10);
+				}
+			arch.rows.push_back(nLine);
+			}
+		}
+
+	}
+
+void Pivot::usage()
+	{
+	fprintf(stderr,"\n\nPivot\nAuthor: Pierre Lindenbaum PhD\nGit-Hash: "
 		GIT_HASH
 		"\nWWW: https://github.com/lindenb/ibddb\nCompilation: %s at %s\n\n",
-		argv[0],__DATE__,__TIME__);
-	fprintf(stderr,"Usage:\n\t%s (options) (stdin|file)\n\n",argv[0]);
-
-
+		__DATE__,__TIME__);
+	fprintf(stderr,"Usage:\n\tPivot (options) (stdin|file)\n\n");
 	fputs("\n\n",stderr);
 	}
 
 
-int main(int argc,char** argv)
+int Pivot::instanceMain(int argc,char** argv)
 	{
-	PivotPtr ptr = (PivotPtr)safeCalloc(1,sizeof(Pivot));
-	FILE* in;
 	for(;;)
 		{
 		struct option long_options[] =
 		     {
-			{"left",    required_argument, 0, 'L'},
+			{"left",   required_argument, 0, 'L'},
  			{"top",    required_argument, 0, 'T'},
 		       {0, 0, 0, 0}
 		     };
@@ -337,21 +385,21 @@ int main(int argc,char** argv)
 		if(c==-1) break;
 		switch(c)
 			{
-			case 'L': parseKeys(&ptr->leftcols,optarg); break;
-			case 'T': parseKeys(&ptr->topcols,optarg); break;
+			case 'L': leftcols.parse(optarg); break;
+			case 'T':  topcols.parse(optarg); break;
 			case 0: break;
 			case '?': break;
-			default: usage(argc,argv); exit(EXIT_FAILURE); break;
+			default: usage(); exit(EXIT_FAILURE); break;
 			}
 		}
 	if(optind==argc)
 		{
-		in=stdin;
+		readData(cin);
 		}
 	else if(optind+1==argc)
 		{
-		in=fopen(argv[optind],"r");
-		if(in==NULL)
+		ifstream in(argv[optind],ios::in);
+		if(!in.is_open())
 			{
 			fprintf(stderr,"Cannot open \"%s\" %s.\n",
 				argv[optind],
@@ -359,74 +407,23 @@ int main(int argc,char** argv)
 				);
 			exit(EXIT_FAILURE);
 			}
+		readData(in);
+		in.close();
 		}
 	else
 		{
 		fputs("Illegal number of arguments.\n",stderr);
 		return EXIT_FAILURE;
 		}
-	size_t nLine=0;
+	
 
-	while(!feof(in))
-		{
-		int side;
-		size_t i;
-		char* line=readLine(in);
-		char** tokens=(char**)safeMalloc(sizeof(char*));
-		size_t token_count=1UL;
-		tokens[0]=line;
-		for(i=0;line[i]!=0;++i)
-			{
-			if(line[i]!='\t') continue;
-			
-			line[i]=0;
-			tokens=(char**)safeRealloc(tokens,sizeof(char*)*(token_count+1));
-			tokens[token_count++]=&line[i+1];
-			}
-		
-		
-		for(side=0;side<2;++side)
-			{
-			ColumnKeyListPtr columnKeyList=(side==0?&ptr->leftcols:&ptr->topcols);
-			ArchetypeListPtr archetypes=(side==0?&ptr->left:&ptr->top);
-			//archetype
-			Archetype archetype;
-			memset((void*)archetype,0,sizeof(Archetype));
-			//prepare values
-			archetype.values = (ScalarPtr)safeCAlloc(columnKeyList->size,sizeof(Scalar)); 
-			
-			for(i=0;i< columnKeyList->size;++i)
-				{
-				ColumnKeyPtr key=(ColumnKeyPtr)&columnKeyList->keys[i];
-				size_t column_index= key->column_index;
-				if(column_index > = token_count) 
-					{
-					fprintf(stdert,"No enough column ");
-					exit(EXIT_FAILURE);
-					}
-				if(IS_NUMERIC(key))
-					{
-					archetype.values[i].f= strtod(tokens[column_index]);
-					}
-				else
-					{
-					archetype.values[i].s= strdup(tokens[column_index]);
-					}
-				}
-			size_t insert_index=lower_bound(archetypes,archetype,columnKeyList);
-			if(insert_index == tokens->size ||
-				ArchetypeCompare(&archetypes->archetypes[insert_index],archetype.value,columnKeyList)!=0)
-				{
-				//realloc
-				//tokens[insert_index]=archetype;
-				}
-			
-			//rows+=currLine;
-			}
-		
-		tokens(tokens);
-		free(line);
-		}
-	free(ptr);
+	
 	return EXIT_SUCCESS;
 	}
+
+int main(int argc,char** argv)
+	{
+	Pivot instance;
+	return instance.instanceMain(argc,argv);
+	}
+

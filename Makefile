@@ -1,12 +1,12 @@
-CC:=gcc
+CC=g++
 CFLAGS:=-O3 -Wall
 
-.PHONY:all pivot
+.PHONY:all clean
 
 
 all: pivot
 
-pivot : pivot.c githash.h
+pivot : pivot.cpp pivot.hh githash.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 githash.h:

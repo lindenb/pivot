@@ -21,18 +21,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-#ifndef PIVOT_H
-#define PIVOT_H
-#include <stdio.h>
-#include <stdlib.h>
+#ifndef PIVOT_HH
+#define PIVOT_HH
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <vector>
+#include <iostream>
+#include <fstream>
 
-/** stdlib */
-void* _safeMalloc(const char*,int,size_t);
-void* _safeCalloc(const char*,int,size_t,size_t);
-void* _safeRealloc(const char*,int,void*,size_t);
-#define safeMalloc(n) _safeMalloc(__FILE__,__LINE__,n)
-#define safeCalloc(n,m) _safeCalloc(__FILE__,__LINE__,n,m)
-#define safeRealloc(p,n) _safeRealloc(__FILE__,__LINE__,p,n)
 #define WHERENL fprintf(stderr,"[%s:%d] ",__FILE__,__LINE__)
 #define DIE_FAILURE(FormatLiteral,...) do { WHERENL; fprintf (stderr,"Git-Hash:"GIT_HASH". Exiting: " FormatLiteral "\n", ##__VA_ARGS__); exit(EXIT_FAILURE);} while(0)
 #define DEBUG(FormatLiteral, ...)  do { fputs("[DEBUG]",stderr); WHERENL; fprintf (stderr,"" FormatLiteral "\n", ##__VA_ARGS__);} while(0)
@@ -41,42 +38,63 @@ typedef union scalar
 	{
 	char* s;
 	double f;
+	long d;
 	} Scalar,*ScalarPtr;
 
-typedef struct column_key_t
+class DataType
+	{
+	public:
+		virtual void parse(Scalar& v,const char* s,size_t len)=0;
+		virtual bool compare(const Scalar& a,const Scalar& b)=0;
+		virtual void dispose(Scalar& v)=0;
+	};
+	
+
+
+
+typedef struct ColumnKey
 	{
 	int order;
 	size_t column_index;
-	}ColumnKey,*ColumnKeyPtr;
+	DataType* data_type;
+	char* parse(const char* arg);
+	}*ColumnKeyPtr;
 
-typedef struct column_key_list_t
+typedef class ColumnKeyList
 	{
-	ColumnKey* keys;
-	size_t size;
-	size_t max_column_index;
-	}ColumnKeyList,*ColumnKeyListPtr;
+	public:
+		std::vector<ColumnKey> keys;
+		
+		void parse(const char* arg);
+	}*ColumnKeyListPtr;
 
-typedef struct archetype_t
+class Archetype
 	{
-	ScalarPtr values;
-	size_t* rows;
-	size_t row_count;
-	} Archetype,*ArchetypePtr;
+	public:
+		ScalarPtr values;
+		std::vector<size_t> rows;
+		Archetype();
+		~Archetype();
+	};
 
-typedef struct archetype_list_t
+typedef class archetype_list_t
 	{
-	ArchetypePtr archetypes;
+	Archetype* archetypes;
 	size_t size;
 	} ArchetypeList,*ArchetypeListPtr;
 
-typedef struct pivot_t
+typedef class Pivot
 	{
-	ColumnKeyList leftcols;
-	ColumnKeyList topcols;
-	ScalarPtr observed;
-	ArchetypeList left;
-	ArchetypeList top;
-	}Pivot,*PivotPtr;
+	public:
+		ColumnKeyList leftcols;
+		ColumnKeyList topcols;
+		ScalarPtr observed;
+		ArchetypeList left;
+		ArchetypeList top;
+		void readData(std::istream& in);
+		void usage();
+		int instanceMain(int argc,char** argv);
+	}*PivotPtr;
 
 #endif
 
