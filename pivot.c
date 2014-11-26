@@ -21,9 +21,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-#include <stdio.h>
-#include <stdlib.h>
 
+#include <string.h>
+#include <unistd.h>
+#include <getopt.h>
+#include <errno.h>
+#include "pivot.h"
+#include "githash.h"
+
+#ifdef XXXXX
 #define DEF_VECTOR(T,name) T* name;size_t name##_size 
 #define REALLOC_ONE(T,name) name=(T*)realloc(name,sizeof(T)*(name##_size + 1))
 #define THROW_ERROR(msg) do { fputs(msg,stderr); exit(EXIT_FAILURE);} while(0)
@@ -197,11 +203,230 @@ static int ArchetypeCompare(
 		}
 	return 0;
 	}
+#endif
+
+void* _safeMalloc(const char* fname,int line, size_t size)
+	{
+	void * ptr=malloc(size);
+	if(ptr==NULL)
+		{
+		DIE_FAILURE("Out of memory \"%s\":%d  N=%ld.\n",
+			fname,line,size
+			);
+		}
+	return ptr;
+	}
+
+void* _safeCalloc(const char* fname,int line, size_t n,size_t size)
+	{
+	void * ptr=calloc(n,size);
+	if(ptr==NULL)
+		{
+		DIE_FAILURE("Out of memory \"%s\":%d N=%ld*%ld.\n",
+			fname,line,n,size
+			);
+		}
+	return ptr;
+	}
+
+void* _safeRealloc(const char* fname,int line, void* ptr,size_t size)
+	{
+	ptr=realloc(ptr,size);
+	if(ptr==NULL)
+		{
+		DIE_FAILURE("Out of memory \"%s\":%d N=%ld\n",
+			fname,line,size
+			);
+		}
+	return ptr;
+	}
+
+static char* readLine(FILE* in)
+	{
+	size_t len=0UL;
+	char* s=NULL;
+	int c;
+	if(feof(in)) return NULL;
+	s=safeMalloc(1);
+	while((c=fgetc(in))!=-1 && c!='\n')
+		{
+		s=safeRealloc(s,sizeof(char*)*(len+2));
+		s[len++]=c;
+		}
+	if(len==0 && feof(in)) { free(s); return NULL;}
+	s[len]=0;
+	return s;
+	}
+	
+
+static void parseKeys(ColumnKeyListPtr keyList, const char* arg)
+	{
+	char* p=(char*)arg;
+	while(*p!=0)
+		{
+		char* p2;
+		ColumnKeyPtr key=NULL;
+		keyList->keys=(ColumnKeyPtr)safeRealloc(keyList->keys,sizeof(ColumnKey)*(keyList->count+1));
+		key=&keyList->keys[keyList->count ];
+		keyList->count++;
+		
+		key->order=1;
+		if(*p=='+') ++p;
+		else if(*p=='-')  {key->order=-1;++p;}
+		
+		key->column_index = strtoul(p,&p2,10);
+		if( key->column_index < 1)
+			{
+			fprintf(stderr,"BAD COLUMN INDEX in %s.\n",arg);
+			exit(EXIT_FAILURE);
+			}
+		key->column_index--;
+		
+		p=p2;
+		
+		if( key->column_index > keyList->max_column_index)
+			{
+			keyList->max_column_index =  key->column_index;
+			}
+			
+		if(*p==0) break;
+		if(*p==',')
+			{
+			++p;
+			continue;
+			}
+		fprintf(stderr,"BAD input in %s.\n",arg);
+		exit(EXIT_FAILURE);
+		}
+	}
+
+static size_t lower_bound(ArchetypeListPtr archetypes,ArchetypePtr archetype,const ColumnKeyListPtr columnKeyList)
+	{
+	return 0UL;
+	}
+
+static void usage(int argc,char** argv)
+	{
+	fprintf(stderr,"\n\n%s\nAuthor: Pierre Lindenbaum PhD\nGit-Hash: "
+		GIT_HASH
+		"\nWWW: https://github.com/lindenb/ibddb\nCompilation: %s at %s\n\n",
+		argv[0],__DATE__,__TIME__);
+	fprintf(stderr,"Usage:\n\t%s (options) (stdin|file)\n\n",argv[0]);
+
+
+	fputs("\n\n",stderr);
+	}
 
 
 int main(int argc,char** argv)
 	{
-	SpreadSheet t;
+	PivotPtr ptr = (PivotPtr)safeCalloc(1,sizeof(Pivot));
+	FILE* in;
+	for(;;)
+		{
+		struct option long_options[] =
+		     {
+			{"left",    required_argument, 0, 'L'},
+ 			{"top",    required_argument, 0, 'T'},
+		       {0, 0, 0, 0}
+		     };
+		 /* getopt_long stores the option index here. */
+		int option_index = 0;
+	     	int c = getopt_long (argc, argv, "L:T:",
+		                    long_options, &option_index);
+		if(c==-1) break;
+		switch(c)
+			{
+			case 'L': parseKeys(&ptr->leftcols,optarg); break;
+			case 'T': parseKeys(&ptr->topcols,optarg); break;
+			case 0: break;
+			case '?': break;
+			default: usage(argc,argv); exit(EXIT_FAILURE); break;
+			}
+		}
+	if(optind==argc)
+		{
+		in=stdin;
+		}
+	else if(optind+1==argc)
+		{
+		in=fopen(argv[optind],"r");
+		if(in==NULL)
+			{
+			fprintf(stderr,"Cannot open \"%s\" %s.\n",
+				argv[optind],
+				strerror(errno)
+				);
+			exit(EXIT_FAILURE);
+			}
+		}
+	else
+		{
+		fputs("Illegal number of arguments.\n",stderr);
+		return EXIT_FAILURE;
+		}
+	size_t nLine=0;
 
+	while(!feof(in))
+		{
+		int side;
+		size_t i;
+		char* line=readLine(in);
+		char** tokens=(char**)safeMalloc(sizeof(char*));
+		size_t token_count=1UL;
+		tokens[0]=line;
+		for(i=0;line[i]!=0;++i)
+			{
+			if(line[i]!='\t') continue;
+			
+			line[i]=0;
+			tokens=(char**)safeRealloc(tokens,sizeof(char*)*(token_count+1));
+			tokens[token_count++]=&line[i+1];
+			}
+		
+		
+		for(side=0;side<2;++side)
+			{
+			ColumnKeyListPtr columnKeyList=(side==0?&ptr->leftcols:&ptr->topcols);
+			ArchetypeListPtr archetypes=(side==0?&ptr->left:&ptr->top);
+			//archetype
+			Archetype archetype;
+			memset((void*)archetype,0,sizeof(Archetype));
+			//prepare values
+			archetype.values = (ScalarPtr)safeCAlloc(columnKeyList->size,sizeof(Scalar)); 
+			
+			for(i=0;i< columnKeyList->size;++i)
+				{
+				ColumnKeyPtr key=(ColumnKeyPtr)&columnKeyList->keys[i];
+				size_t column_index= key->column_index;
+				if(column_index > = token_count) 
+					{
+					fprintf(stdert,"No enough column ");
+					exit(EXIT_FAILURE);
+					}
+				if(IS_NUMERIC(key))
+					{
+					archetype.values[i].f= strtod(tokens[column_index]);
+					}
+				else
+					{
+					archetype.values[i].s= strdup(tokens[column_index]);
+					}
+				}
+			size_t insert_index=lower_bound(archetypes,archetype,columnKeyList);
+			if(insert_index == tokens->size ||
+				ArchetypeCompare(&archetypes->archetypes[insert_index],archetype.value,columnKeyList)!=0)
+				{
+				//realloc
+				//tokens[insert_index]=archetype;
+				}
+			
+			//rows+=currLine;
+			}
+		
+		tokens(tokens);
+		free(line);
+		}
+	free(ptr);
 	return EXIT_SUCCESS;
 	}
