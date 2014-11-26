@@ -29,6 +29,7 @@ SOFTWARE.
 #include <vector>
 #include <iostream>
 #include <fstream>
+#include "leveldb/db.h"
 
 #define WHERENL fprintf(stderr,"[%s:%d] ",__FILE__,__LINE__)
 #define DIE_FAILURE(FormatLiteral,...) do { WHERENL; fprintf (stderr,"Git-Hash:"GIT_HASH". Exiting: " FormatLiteral "\n", ##__VA_ARGS__); exit(EXIT_FAILURE);} while(0)
@@ -86,11 +87,14 @@ typedef class archetype_list_t
 typedef class Pivot
 	{
 	public:
-		ColumnKeyList leftcols;
+		leveldb::DB* db;
+  		ColumnKeyList leftcols;
 		ColumnKeyList topcols;
 		ScalarPtr observed;
 		ArchetypeList left;
 		ArchetypeList top;
+		Pivot();
+		~Pivot();
 		void readData(std::istream& in);
 		void usage();
 		int instanceMain(int argc,char** argv);

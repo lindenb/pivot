@@ -6,8 +6,12 @@ CFLAGS:=-O3 -Wall
 
 all: pivot
 
-pivot : pivot.cpp pivot.hh githash.h
-	$(CC) $(CFLAGS) -o $@ $<
+pivot : pivot.o leveldb/libleveldb.a
+	$(CC) $(CFLAGS) -o $@ $^ -lpthread
+
+
+pivot.o : pivot.cpp pivot.hh githash.h leveldb/libleveldb.a
+	$(CC) $(CFLAGS) -c -I leveldb/include -o $@ $< 
 
 githash.h:
 	echo "#ifndef GIT_HASH" > $@
@@ -16,7 +20,12 @@ githash.h:
 	echo '"' >> $@
 	echo '#endif' >> $@
 
+leveldb/libleveldb.a: leveldb
+	$(MAKE) -C leveldb
+
+leveldb:
+	git clone "https://github.com/google/leveldb.git"
 
 clean:
-	rm -f pivot githash.h
+	rm -rf pivot githash.h *.o leveldb
 
