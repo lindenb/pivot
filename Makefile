@@ -1,7 +1,7 @@
 CC=g++
 CFLAGS:=-O3 -Wall
 
-.PHONY:all clean
+.PHONY:all clean test
 
 
 all: pivot
@@ -25,6 +25,9 @@ leveldb/libleveldb.a: leveldb
 
 leveldb:
 	git clone "https://github.com/google/leveldb.git"
+
+test: pivot
+	./pivot pivot.hh
 
 clean:
 	rm -rf pivot githash.h *.o leveldb

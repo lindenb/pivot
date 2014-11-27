@@ -49,6 +49,19 @@ class _StringType:public DataType
 			{
 			delete[] v.s;
 			}
+		virtual void write(std::ostream& out,const Scalar& a)
+			{
+			size_t n=strlen(a.s);
+			out.write(&n,sizeof(size_t));
+			out.write(a.s,n);
+			}
+		virtual void read(std::istream& in,Scalar& a)
+			{
+			size_t len;
+			in.read(&len,sizeof(size_t));
+			v.s=new char[len+1];
+			v.s[len]=0;
+			}
 	};
 static DataType* TYPE_STRING = new  _StringType;
 
@@ -69,6 +82,14 @@ class _DoubleType:public DataType
 			}
 		virtual void dispose(Scalar& v)
 			{
+			}
+		virtual void write(std::ostream& out,const Scalar& a)
+			{
+			out.write(&a.f,sizeof(double));
+			}
+		virtual void read(std::istream& in,Scalar& a)
+			{
+			in.read(&a.f,sizeof(double));
 			}
 	};
 static DataType* TYPE_DOUBLE = new  _DoubleType;
@@ -91,6 +112,14 @@ class _LongType:public DataType
 			}
 		virtual void dispose(Scalar& v)
 			{
+			}
+		virtual void write(std::ostream& out,const Scalar& a)
+			{
+			out.write(&a.d,sizeof(long));
+			}
+		virtual void read(std::istream& in,Scalar& a)
+			{
+			in.read(&a.d,sizeof(long));
 			}
 	};
 static DataType* TYPE_LONG = new  _LongType;
@@ -144,30 +173,75 @@ char* ColumnKey::parse(const char* arg)
 	this->column_index--;
 	return (char*)p2;
 	}
+#define OP_CODE_ROW_INDEX 'I'
+struct OperatorRowIndex
+	{
+	char opcode;
+	size_t nLine;
+	};
 
+	
 void Pivot::readData(std::istream& in)
 	{
-	size_t nLine=0;
+	OperatorRowIndex rowIndex;
+	rowIndex.opcode= OP_CODE_ROW_INDEX;
+	rowIndex.nLine=0;
 	std::string line;
 	std::vector<size_t> tokens;
 	
 	leveldb::Options options;
 	options.create_if_missing=true;
-	
-	leveldb::Status s = leveldb::DB::Open(options, "",&db);
+	char* dir=new char[100];
+	strcpy(dir,"pivot.leveldb.XXXXXX");
+	if(mkdtemp(dir)==NULL)
+		{
+		ostringstream err;
+		err << "mkdtemp failed: " << strerror(errno) << endl;
+		throw std::runtime_error(err.str());
+		}
+		
+	this->tmpDir.assign(dir);
+	leveldb::Status s = leveldb::DB::Open(options,dir,&db);
+	delete [] dir;
 	
 	while(getline(in,line,'\n'))
 		{
 		size_t i;
+		rowIndex.nLine++;
 		tokens.clear();
+		
+		tokens.push_back(0UL);
 		for(i=0;i< line.size();++i)
 			{
 			if(line[i]!='\t') continue;
+			line[i]='0';//set to EOS
 			tokens.push_back(i); 
 			}
-		tokens.push_back(line.size()); 
+		
+		size_t tmp_size =tokens.size();
+		ostringstream datastr;
+		datastr.write((const char*)&tmp_size,sizeof(size_t));
+		for(i=0;i< tokens.size();++i)
+			{
+			tmp_size=tokens[i];
+			datastr.write((const char*)&tmp_size,sizeof(size_t));
+			}
+		tmp_size =line.size();
+		datastr.write((const char*)&tmp_size,sizeof(size_t));
+		datastr.write((const char*)line.c_str(),sizeof(char)*(line.size()+1));
 		
 		
+		leveldb::Slice key((const char*)&rowIndex,sizeof(OperatorRowIndex));
+		leveldb::Slice data(datastr.str());
+		
+		leveldb::Status status = db->Put(leveldb::WriteOptions(),key,data);
+		if(!status.ok())
+			{
+			ostringstream err;
+			err << "cannot insert " << line << endl;
+			throw std::runtime_error(err.str());
+			}
+		/*
 		for(int side=0;side<2;++side)
 			{
 			ColumnKeyList& columns=(side==0?this->leftcols:this->topcols);
@@ -183,9 +257,9 @@ void Pivot::readData(std::istream& in)
 				columns.keys[i].data_type->parse(arch.values[i],&line[tokens[ columns.keys[i].column_index]],10);
 				}
 			arch.rows.push_back(nLine);
-			}
+			}*/
 		}
-
+	clog << "Inserted "<< rowIndex.nLine << " lines." << endl;
 	}
 
 Pivot::Pivot():db(0)
@@ -194,7 +268,21 @@ Pivot::Pivot():db(0)
 
 Pivot::~Pivot()
 	{
-	if(this->db!=0) delete this->db;
+	if(this->db!=0)
+		{
+		delete this->db;
+		leveldb::Env* env= leveldb::Env::Default();
+		if(!this->tmpDir.empty())
+			{
+			clog << "removing "<< tmpDir << endl;
+			
+			leveldb::Status status = env->DeleteDir(this->tmpDir);
+			if(!status.ok())
+				{
+				cerr << "cannot remove " << this->tmpDir << endl;
+				}
+			}
+		}
 	}
 
 void Pivot::usage()

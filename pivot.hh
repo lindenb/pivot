@@ -29,6 +29,9 @@ SOFTWARE.
 #include <vector>
 #include <iostream>
 #include <fstream>
+#include <stdexcept>
+#include <sstream>
+#include "leveldb/env.h"
 #include "leveldb/db.h"
 
 #define WHERENL fprintf(stderr,"[%s:%d] ",__FILE__,__LINE__)
@@ -48,6 +51,8 @@ class DataType
 		virtual void parse(Scalar& v,const char* s,size_t len)=0;
 		virtual bool compare(const Scalar& a,const Scalar& b)=0;
 		virtual void dispose(Scalar& v)=0;
+		virtual void write(std::ostream& out,const Scalar& a);
+		virtual void read(std::istream& in,Scalar& a);
 	};
 	
 
@@ -88,6 +93,7 @@ typedef class Pivot
 	{
 	public:
 		leveldb::DB* db;
+		std::string tmpDir;
   		ColumnKeyList leftcols;
 		ColumnKeyList topcols;
 		ScalarPtr observed;
