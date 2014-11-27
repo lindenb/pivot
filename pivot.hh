@@ -31,9 +31,10 @@ SOFTWARE.
 #include <fstream>
 #include <stdexcept>
 #include <sstream>
+#include <ftw.h>
 #include "leveldb/env.h"
 #include "leveldb/db.h"
-
+#include "leveldb/comparator.h"
 #define WHERENL fprintf(stderr,"[%s:%d] ",__FILE__,__LINE__)
 #define DIE_FAILURE(FormatLiteral,...) do { WHERENL; fprintf (stderr,"Git-Hash:"GIT_HASH". Exiting: " FormatLiteral "\n", ##__VA_ARGS__); exit(EXIT_FAILURE);} while(0)
 #define DEBUG(FormatLiteral, ...)  do { fputs("[DEBUG]",stderr); WHERENL; fprintf (stderr,"" FormatLiteral "\n", ##__VA_ARGS__);} while(0)
@@ -51,8 +52,8 @@ class DataType
 		virtual void parse(Scalar& v,const char* s,size_t len)=0;
 		virtual bool compare(const Scalar& a,const Scalar& b)=0;
 		virtual void dispose(Scalar& v)=0;
-		virtual void write(std::ostream& out,const Scalar& a);
-		virtual void read(std::istream& in,Scalar& a);
+		virtual void write(std::ostream& out,const Scalar& a)=0;
+		virtual void read(std::istream& in,Scalar& a)=0;
 	};
 	
 
@@ -72,6 +73,7 @@ typedef class ColumnKeyList
 		std::vector<ColumnKey> keys;
 		
 		void parse(const char* arg);
+		size_t size() const { return keys.size();}
 	}*ColumnKeyListPtr;
 
 class Archetype
@@ -89,6 +91,19 @@ typedef class archetype_list_t
 	size_t size;
 	} ArchetypeList,*ArchetypeListPtr;
 
+class Pivot;
+class PivotComparator : public leveldb::Comparator {
+   private:
+   	Pivot* owner;
+   public:
+	    PivotComparator(Pivot* owner);
+	    virtual ~PivotComparator();
+	    virtual int Compare(const leveldb::Slice& a, const leveldb::Slice& b) const;
+	    virtual const char* Name() const;
+	    virtual  void FindShortestSeparator(std::string*, const leveldb::Slice&) const;
+	    virtual void FindShortSuccessor(std::string*) const;
+  };
+
 typedef class Pivot
 	{
 	public:
@@ -104,6 +119,11 @@ typedef class Pivot
 		void readData(std::istream& in);
 		void usage();
 		int instanceMain(int argc,char** argv);
+	private:
+		PivotComparator* comparator;
+		static int _rm( const char *path, const struct stat *s, int flag, struct FTW *f );
+		static void deleteDir(const char* dir);
+		
 	}*PivotPtr;
 
 #endif

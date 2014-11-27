@@ -52,15 +52,16 @@ class _StringType:public DataType
 		virtual void write(std::ostream& out,const Scalar& a)
 			{
 			size_t n=strlen(a.s);
-			out.write(&n,sizeof(size_t));
-			out.write(a.s,n);
+			out.write((const char*)&n,sizeof(size_t));
+			out.write((const char*)a.s,n);
 			}
 		virtual void read(std::istream& in,Scalar& a)
 			{
 			size_t len;
-			in.read(&len,sizeof(size_t));
-			v.s=new char[len+1];
-			v.s[len]=0;
+			in.read((char*)&len,sizeof(size_t));
+			a.s=new char[len+1];
+			in.read(a.s,sizeof(char)*len);
+			a.s[len]=0;
 			}
 	};
 static DataType* TYPE_STRING = new  _StringType;
@@ -85,11 +86,11 @@ class _DoubleType:public DataType
 			}
 		virtual void write(std::ostream& out,const Scalar& a)
 			{
-			out.write(&a.f,sizeof(double));
+			out.write((const char*)&a.f,sizeof(double));
 			}
 		virtual void read(std::istream& in,Scalar& a)
 			{
-			in.read(&a.f,sizeof(double));
+			in.read((char*)&a.f,sizeof(double));
 			}
 	};
 static DataType* TYPE_DOUBLE = new  _DoubleType;
@@ -115,11 +116,11 @@ class _LongType:public DataType
 			}
 		virtual void write(std::ostream& out,const Scalar& a)
 			{
-			out.write(&a.d,sizeof(long));
+			out.write((const char*)&a.d,sizeof(long));
 			}
 		virtual void read(std::istream& in,Scalar& a)
 			{
-			in.read(&a.d,sizeof(long));
+			in.read((char*)&a.d,sizeof(long));
 			}
 	};
 static DataType* TYPE_LONG = new  _LongType;
@@ -180,17 +181,69 @@ struct OperatorRowIndex
 	size_t nLine;
 	};
 
+PivotComparator::PivotComparator(Pivot* owner):owner(owner)
+	{
+	}
+
+PivotComparator::~PivotComparator()
+	{
+	}
+
+int PivotComparator::Compare(const leveldb::Slice& a, const leveldb::Slice& b) const
+	{
+	istringstream ina;
+	istringstream inb;
+	ina.str(a.ToString());
+	inb.str(b.ToString());
+	char opcodea=0;
+	char opcodeb=0;
+	ina.read(&opcodea,sizeof(char));
+	inb.read(&opcodeb,sizeof(char));
+	if(opcodea!=opcodeb)
+		{
+		throw runtime_error("boum");
+		}
+	switch(opcodea)
+		{
+		case OP_CODE_ROW_INDEX:
+			{
+			size_t linea=0UL;
+			size_t lineb=0UL;
+			ina.read((char*)&linea,sizeof(size_t));
+			inb.read((char*)&lineb,sizeof(size_t));
+			if(linea<lineb) return -1;
+			if(linea>lineb) return 1;
+			return 0;
+			}
+		default: 
+			{
+			cerr << "BAD OPCODE" << (char)opcodea << endl;
+			throw runtime_error("boum");
+			}
+		}
+	return 0;
+	}
+
+const char* PivotComparator::Name() const
+	{
+	return "PivotComparator";
+	}
+
+void PivotComparator::FindShortestSeparator(std::string*, const leveldb::Slice&) const{}
+void PivotComparator::FindShortSuccessor(std::string*) const {}
+
 	
 void Pivot::readData(std::istream& in)
 	{
 	OperatorRowIndex rowIndex;
-	rowIndex.opcode= OP_CODE_ROW_INDEX;
-	rowIndex.nLine=0;
+	char opcode= OP_CODE_ROW_INDEX;
+	size_t nLine=0UL;
 	std::string line;
 	std::vector<size_t> tokens;
-	
+	this->comparator = new PivotComparator(this);
 	leveldb::Options options;
 	options.create_if_missing=true;
+	options.comparator = comparator;
 	char* dir=new char[100];
 	strcpy(dir,"pivot.leveldb.XXXXXX");
 	if(mkdtemp(dir)==NULL)
@@ -207,9 +260,10 @@ void Pivot::readData(std::istream& in)
 	while(getline(in,line,'\n'))
 		{
 		size_t i;
-		rowIndex.nLine++;
+		nLine++;
 		tokens.clear();
-		
+
+
 		tokens.push_back(0UL);
 		for(i=0;i< line.size();++i)
 			{
@@ -220,6 +274,7 @@ void Pivot::readData(std::istream& in)
 		
 		size_t tmp_size =tokens.size();
 		ostringstream datastr;
+		datastr.write("X",sizeof(char));
 		datastr.write((const char*)&tmp_size,sizeof(size_t));
 		for(i=0;i< tokens.size();++i)
 			{
@@ -231,7 +286,14 @@ void Pivot::readData(std::istream& in)
 		datastr.write((const char*)line.c_str(),sizeof(char)*(line.size()+1));
 		
 		
-		leveldb::Slice key((const char*)&rowIndex,sizeof(OperatorRowIndex));
+		ostringstream keystr;
+		char ss[5];
+		ss[0]=OP_CODE_ROW_INDEX;
+		memcpy(&ss[1],(const void*)&nLine,sizeof(size_t));
+		//keystr.write((const char*)&opcode,sizeof(char));
+		//keystr.write((const char*)&nLine,sizeof(size_t));
+		
+		leveldb::Slice key(ss,5);
 		leveldb::Slice data(datastr.str());
 		
 		leveldb::Status status = db->Put(leveldb::WriteOptions(),key,data);
@@ -262,29 +324,48 @@ void Pivot::readData(std::istream& in)
 	clog << "Inserted "<< rowIndex.nLine << " lines." << endl;
 	}
 
-Pivot::Pivot():db(0)
+Pivot::Pivot():db(0),comparator(0)
 	{
 	}
 
 Pivot::~Pivot()
 	{
+	if(comparator!=0) delete comparator;
 	if(this->db!=0)
 		{
 		delete this->db;
 		leveldb::Env* env= leveldb::Env::Default();
 		if(!this->tmpDir.empty())
 			{
-			clog << "removing "<< tmpDir << endl;
-			
-			leveldb::Status status = env->DeleteDir(this->tmpDir);
-			if(!status.ok())
-				{
-				cerr << "cannot remove " << this->tmpDir << endl;
-				}
+			Pivot::deleteDir(this->tmpDir.c_str());
 			}
 		}
 	}
 
+/* http://stackoverflow.com/questions/1149764/ */
+int Pivot::_rm( const char *path, const struct stat *s, int flag, struct FTW *f )
+	{
+	int status;
+	int (*rm_func)( const char * );
+	switch( flag )
+		{
+		case FTW_DP: rm_func = rmdir; break;
+		default:     rm_func = unlink; break;
+		}
+	if( status = rm_func( path ), status != 0 )
+		perror( path );
+	else
+		clog << "delete " << path << endl;
+	return status;
+	}
+
+void Pivot::deleteDir(const char* dir)
+	{
+	/* ftw() walks through the directory tree that is located under the directory dirpath,
+	* and calls fn() once for each entry in the tree */
+	::nftw(dir, Pivot::_rm, 2, FTW_DEPTH );
+	}	
+	
 void Pivot::usage()
 	{
 	fprintf(stderr,"\n\nPivot\nAuthor: Pierre Lindenbaum PhD\nGit-Hash: "
@@ -313,19 +394,35 @@ int Pivot::instanceMain(int argc,char** argv)
 		if(c==-1) break;
 		switch(c)
 			{
-			case 'L': leftcols.parse(optarg); break;
+			case 'L':
+				if(leftcols.size()!=0)
+					{
+					cerr << "Option -L defined twice" << endl;
+					return -1;
+					}
+				leftcols.parse(optarg);
+				break;
 			case 'T':  topcols.parse(optarg); break;
 			case 0: break;
 			case '?': break;
 			default: usage(); exit(EXIT_FAILURE); break;
 			}
 		}
+	
+	/*if(leftcols.size()==0)
+		{
+		cerr << "Option -L undefined." << endl;
+		return EXIT_FAILURE;
+		}*/
+	
 	if(optind==argc)
 		{
+		clog << "Reading from stdin" << endl;
 		readData(cin);
 		}
 	else if(optind+1==argc)
 		{
+		clog << "Reading from "<< argv[optind] << endl;
 		ifstream in(argv[optind],ios::in);
 		if(!in.is_open())
 			{
@@ -352,6 +449,14 @@ int Pivot::instanceMain(int argc,char** argv)
 int main(int argc,char** argv)
 	{
 	Pivot instance;
-	return instance.instanceMain(argc,argv);
+	try
+		{
+		return instance.instanceMain(argc,argv);
+		}
+	catch(exception err)
+		{
+		cerr << err.what() << endl;
+		return EXIT_FAILURE;
+		}
 	}
 
