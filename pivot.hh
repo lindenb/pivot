@@ -24,6 +24,7 @@ SOFTWARE.
 #ifndef PIVOT_HH
 #define PIVOT_HH
 #include <cstdio>
+#include <vector>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -39,31 +40,52 @@ SOFTWARE.
 #define DIE_FAILURE(FormatLiteral,...) do { WHERENL; fprintf (stderr,"Git-Hash:"GIT_HASH". Exiting: " FormatLiteral "\n", ##__VA_ARGS__); exit(EXIT_FAILURE);} while(0)
 #define DEBUG(FormatLiteral, ...)  do { fputs("[DEBUG]",stderr); WHERENL; fprintf (stderr,"" FormatLiteral "\n", ##__VA_ARGS__);} while(0)
 
-typedef union scalar
-	{
-	char* s;
-	double f;
-	long d;
-	} Scalar,*ScalarPtr;
-
 class DataType
 	{
 	public:
-		virtual void parse(Scalar& v,const char* s,size_t len)=0;
-		virtual bool compare(const Scalar& a,const Scalar& b)=0;
-		virtual void dispose(Scalar& v)=0;
-		virtual void write(std::ostream& out,const Scalar& a)=0;
-		virtual void read(std::istream& in,Scalar& a)=0;
+		virtual std::size_t sizeOf(const void* ptr)=0;
+		virtual void* parse(const char* s)=0;
+		virtual int compare(const void* a,const void* b)=0;
+		virtual void dispose(void* ptr)=0;
+		virtual void* clone(const void* ptr)=0;
+		virtual char* write(const void* ptr,char* out)=0;
+		virtual void* read(const char* ptr, char** end_ptr)=0;
 	};
 	
 
+class Scalar
+	{
+	private:
+		DataType* datatype;
+		void* ptr;
+	public:
+		Scalar(DataType* datatype,void* ptr);
+		Scalar(const Scalar& cp);
+		~Scalar();
+		std::size_t sizeOf() const;
+		Scalar& operator=(const Scalar& cp);
+		int compare(const Scalar& cp) const; 
+		char* write(char* out) const;
+	};
 
+class Archetype
+	{
+	public:
+		std::vector<Scalar> scalars;
+		Archetype();
+		Archetype(const Archetype& cp);
+		~Archetype();
+		Archetype& operator=(const Archetype& cp);
+		int compare(const Archetype& cp) const;
+		std::size_t sizeOf() const;
+		char* write(char* out);
+	};
 
 typedef struct ColumnKey
 	{
 	int order;
 	size_t column_index;
-	DataType* data_type;
+	DataType* datatype;
 	char* parse(const char* arg);
 	}*ColumnKeyPtr;
 
@@ -76,20 +98,8 @@ typedef class ColumnKeyList
 		size_t size() const { return keys.size();}
 	}*ColumnKeyListPtr;
 
-class Archetype
-	{
-	public:
-		ScalarPtr values;
-		std::vector<size_t> rows;
-		Archetype();
-		~Archetype();
-	};
 
-typedef class archetype_list_t
-	{
-	Archetype* archetypes;
-	size_t size;
-	} ArchetypeList,*ArchetypeListPtr;
+
 
 class Pivot;
 class PivotComparator : public leveldb::Comparator {
@@ -111,9 +121,7 @@ typedef class Pivot
 		std::string tmpDir;
   		ColumnKeyList leftcols;
 		ColumnKeyList topcols;
-		ScalarPtr observed;
-		ArchetypeList left;
-		ArchetypeList top;
+		Scalar* observed;
 		Pivot();
 		~Pivot();
 		void readData(std::istream& in);

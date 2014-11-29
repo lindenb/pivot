@@ -32,41 +32,97 @@ SOFTWARE.
 using namespace std;
 
 
+Scalar::Scalar(DataType* datatype,void* ptr):datatype(datatype),ptr(ptr)
+	{
+	}
+
+Scalar::Scalar(const Scalar& cp):datatype(cp.datatype),ptr(0)
+	{
+	this->ptr = cp.datatype->clone(cp.ptr);
+	}
+
+Scalar::~Scalar()
+	{
+	this->datatype->dispose(ptr);
+	}
+
+int Scalar::compare(const Scalar& cp) const
+	{
+	if(this->datatype!=cp.datatype) cerr << "BOUMDT ?" << endl;
+	return this->datatype->compare(this->ptr,cp.ptr);
+	}
+
+Scalar& Scalar::operator=(const Scalar& cp)
+	{
+	if(this!=&cp)
+		{
+		this->datatype->dispose(this->ptr);
+		this->datatype = cp.datatype;
+		this->ptr = cp.datatype->clone(cp.ptr);
+		}
+	return *this;
+	}
+std::size_t Scalar::sizeOf() const
+	{
+	return this->datatype->sizeOf(this->ptr);
+	}
+
+char* Scalar::write(char* out) const
+	{
+	return this->datatype->write(this->ptr,out);
+	}
 
 class _StringType:public DataType
 	{
 	public:
-		virtual void parse(Scalar& v,const char* s,size_t len)
+		virtual std::size_t sizeOf(const void* ptr)
 			{
-			v.s=new char[len+1];
-			strncpy(v.s,s,len);
+			return sizeof(size_t) + ((const std::string*)ptr)->size();
 			}
-		virtual bool compare(const Scalar& a,const Scalar& b)
+		
+		virtual void* clone(const void* v)
 			{
-			return strcmp(a.s,b.s)<0;
+			return new std::string(*((const std::string*)v) );
 			}
-		virtual void dispose(Scalar& v)
+		virtual void* parse(const char* s)
 			{
-			delete[] v.s;
+			return new std::string(s);
 			}
-		virtual void write(std::ostream& out,const Scalar& a)
+		virtual int compare(const void* a,const void* b)
 			{
-			size_t n=strlen(a.s);
-			out.write((const char*)&n,sizeof(size_t));
-			out.write((const char*)a.s,n);
+			const std::string* s1=(const std::string*)a;
+			const std::string* s2=(const std::string*)b;
+			return s1->compare(*s2);
 			}
-		virtual void read(std::istream& in,Scalar& a)
+		virtual void dispose(void* v)
+			{
+			if(v!=0) delete (std::string*)v;
+			}
+		virtual char* write(const void* ptr, char* out)
+			{
+			size_t len =  ((const std::string*)ptr)->size();
+			memcpy((void*)out,(const void*)&len,sizeof(size_t));
+			out+=sizeof(size_t);
+			memcpy((void*)out,((const std::string*)ptr)->data(),sizeof(char)*len);
+			out+=len;
+			return out;
+			}
+		virtual void* read(const char* ptr, char** end_ptr)
 			{
 			size_t len;
-			in.read((char*)&len,sizeof(size_t));
-			a.s=new char[len+1];
-			in.read(a.s,sizeof(char)*len);
-			a.s[len]=0;
+			char* curr=(char*)ptr;
+			memcpy((void*)&len,curr,sizeof(size_t));
+			curr+=sizeof(size_t);
+			std::string* s=new string(len,'\0');
+			memcpy((void*)s->data(),curr,len*sizeof(char));
+			curr+=len;
+			*end_ptr=curr;
+			return s;
 			}
 	};
 static DataType* TYPE_STRING = new  _StringType;
 
-
+#ifdef XXX
 class _DoubleType:public DataType
 	{
 	public:
@@ -124,15 +180,71 @@ class _LongType:public DataType
 			}
 	};
 static DataType* TYPE_LONG = new  _LongType;
+#endif
 
-Archetype::Archetype():values(0)
+Archetype::Archetype()
 	{
 	}
+Archetype::Archetype(const Archetype& cp)
+	{
+	for(size_t i=0;i< cp.scalars.size();++i)
+		{
+		this->scalars.push_back(cp.scalars.at(i));
+		}
+	}
 
+Archetype& Archetype::operator=(const Archetype& cp)
+	{
+	if(this!=&cp)
+		{
+		this->scalars.clear();
+		for(size_t i=0;i< cp.scalars.size();++i)
+			{
+			this->scalars.push_back(cp.scalars.at(i));
+			}
+		}
+	return *this;
+	}
+	
 Archetype::~Archetype()
 	{
-	if(values!=0) delete[] values;
+
 	}	
+
+int Archetype::compare(const Archetype& cp) const
+	{
+	size_t i;
+	if(this->scalars.size()!=cp.scalars.size())
+		{
+		//TODO BOUMMMMMMMMMMMMMMMMMMMMMMM
+		}
+	for(i=0;i< this->scalars.size();++i)
+		{
+		int d=  this->scalars.at(i).compare( cp.scalars.at(i) );
+		if(d != 0) return d;
+		}
+	return 0;
+	}
+
+std::size_t Archetype::sizeOf() const
+	{
+	size_t n=0UL,i;
+	for(i=0;i< this->scalars.size();++i)
+		{
+		n+= this->scalars.at(i).sizeOf();
+		}
+	return n;
+	}
+
+
+char* Archetype::write(char* out)
+	{
+	for(size_t i=0;i< this->scalars.size();++i)
+		{
+		out = this->scalars.at(i).write(out);
+		}
+	return out;
+	}
 
 
 void ColumnKeyList::parse(const char* arg)
@@ -161,7 +273,7 @@ char* ColumnKey::parse(const char* arg)
 	char* p2;
 	char* p=(char*)arg;
 	this->order=1;
-	this->data_type = TYPE_STRING;
+	this->datatype = TYPE_STRING;
 	if(*p=='+') ++p;
 	else if(*p=='-')  {this->order=-1;++p;}
 	
@@ -303,12 +415,12 @@ void Pivot::readData(std::istream& in)
 			err << "cannot insert " << line << endl;
 			throw std::runtime_error(err.str());
 			}
-		/*
+		
 		for(int side=0;side<2;++side)
 			{
 			ColumnKeyList& columns=(side==0?this->leftcols:this->topcols);
-			Archetype arch;
-			arch.values = new Scalar[columns.keys.size()];
+			if(columns.keys.empty()) continue;
+			Archetype* archetype=new Archetype;
 			for(size_t i=0;i< columns.keys.size();++i)
 				{
 				if( tokens.size()<= columns.keys[i].column_index)
@@ -316,10 +428,30 @@ void Pivot::readData(std::istream& in)
 					cerr << "BOUM" << endl;
 					exit(-1);
 					}
-				columns.keys[i].data_type->parse(arch.values[i],&line[tokens[ columns.keys[i].column_index]],10);
+				archetype->scalars.push_back(Scalar(
+					columns.keys[i].datatype,
+					columns.keys[i].datatype->parse(0)
+					));
 				}
-			arch.rows.push_back(nLine);
-			}*/
+			size_t len = sizeof(char)+sizeof(size_t)+archetype->sizeOf();
+			char* out=new char[len];
+			out[0]=(side==0?'A':'B');
+			char* end_ptr= archetype->write(&out[1]);
+			memcpy(end_ptr,&nLine,sizeof(size_t));
+			
+			leveldb::Slice key2(out,len);
+			leveldb::Slice data2((char*)&nLine,sizeof(size_t));
+			
+			leveldb::Status status = db->Put(leveldb::WriteOptions(),key2,data2);
+			if(!status.ok())
+				{
+				ostringstream err;
+				err << "cannot insert " << line << endl;
+				throw std::runtime_error(err.str());
+				}
+			
+			delete archetype;
+			}
 		}
 	clog << "Inserted "<< rowIndex.nLine << " lines." << endl;
 	}
