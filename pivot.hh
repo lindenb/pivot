@@ -36,9 +36,19 @@ SOFTWARE.
 #include "leveldb/env.h"
 #include "leveldb/db.h"
 #include "leveldb/comparator.h"
-#define WHERENL fprintf(stderr,"[%s:%d] ",__FILE__,__LINE__)
-#define DIE_FAILURE(FormatLiteral,...) do { WHERENL; fprintf (stderr,"Git-Hash:"GIT_HASH". Exiting: " FormatLiteral "\n", ##__VA_ARGS__); exit(EXIT_FAILURE);} while(0)
-#define DEBUG(FormatLiteral, ...)  do { fputs("[DEBUG]",stderr); WHERENL; fprintf (stderr,"" FormatLiteral "\n", ##__VA_ARGS__);} while(0)
+
+#define THROW( a) do {\
+	std::ostringstream _os; \
+	_os << "[" << __FILE__ << ":" << __LINE__ << "]" << a << std::endl;\
+	throw std::runtime_error(_os.str());\
+	} while(0)
+#define DEBUG(a)  do {std::cerr  << "[" << __FILE__ << ":" << __LINE__ << "]" << a << std::endl;} while(0)
+
+enum OpCode {
+	OP_CODE_ROW_INDEX='I',
+	OP_CODE_LEFT='L',
+	OP_CODE_TOP='T'
+	};
 
 class DataType
 	{
@@ -87,6 +97,7 @@ typedef struct ColumnKey
 	size_t column_index;
 	DataType* datatype;
 	char* parse(const char* arg);
+	Scalar scalar(const char* ptr,char** endptr);
 	}*ColumnKeyPtr;
 
 typedef class ColumnKeyList
@@ -96,6 +107,8 @@ typedef class ColumnKeyList
 		
 		void parse(const char* arg);
 		size_t size() const { return keys.size();}
+		ColumnKey& at(size_t i) { return keys.at(i);}
+		
 	}*ColumnKeyListPtr;
 
 
@@ -105,8 +118,9 @@ class Pivot;
 class PivotComparator : public leveldb::Comparator {
    private:
    	Pivot* owner;
+   	bool compare_for_leveldb;
    public:
-	    PivotComparator(Pivot* owner);
+	    PivotComparator(Pivot* owner,bool compare_for_leveldb);
 	    virtual ~PivotComparator();
 	    virtual int Compare(const leveldb::Slice& a, const leveldb::Slice& b) const;
 	    virtual const char* Name() const;

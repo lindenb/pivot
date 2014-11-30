@@ -286,14 +286,14 @@ char* ColumnKey::parse(const char* arg)
 	this->column_index--;
 	return (char*)p2;
 	}
-#define OP_CODE_ROW_INDEX 'I'
-struct OperatorRowIndex
-	{
-	char opcode;
-	size_t nLine;
-	};
 
-PivotComparator::PivotComparator(Pivot* owner):owner(owner)
+Scalar ColumnKey::scalar(const char* ptr,char** endptr)
+	{
+	void* data=  this->datatype->read(ptr, endptr);
+	return Scalar(this->datatype,data);
+	}
+
+PivotComparator::PivotComparator(Pivot* owner,bool compare_for_leveldb):owner(owner),compare_for_leveldb(compare_for_leveldb)
 	{
 	}
 
@@ -303,29 +303,47 @@ PivotComparator::~PivotComparator()
 
 int PivotComparator::Compare(const leveldb::Slice& a, const leveldb::Slice& b) const
 	{
-	istringstream ina;
-	istringstream inb;
-	ina.str(a.ToString());
-	inb.str(b.ToString());
-	char opcodea=0;
-	char opcodeb=0;
-	ina.read(&opcodea,sizeof(char));
-	inb.read(&opcodeb,sizeof(char));
+	std::string ina(a.ToString());
+	std::string inb(b.ToString());
+	char* ptr_a = (char*)ina.data();
+	char* ptr_b = (char*)inb.data();
+	
+	char opcodea= ptr_a[0]; ptr_a++;
+	char opcodeb= ptr_b[0]; ptr_b++;
 	if(opcodea!=opcodeb)
 		{
-		throw runtime_error("boum");
+		if( opcodea < opcodeb ) return -1;
+		if( opcodea > opcodeb ) return  1;
 		}
 	switch(opcodea)
 		{
+		
+		case OP_CODE_LEFT:
+		case OP_CODE_TOP:
+			{
+			ColumnKeyList& cols=(opcodea==OP_CODE_LEFT?this->owner->leftcols:this->owner->topcols);
+			for(size_t i=0;i< cols.size();++i)
+				{
+				char* endptr;
+				Scalar scalara = cols.at(i).scalar(ptr_a,&endptr);
+				ptr_a = endptr;
+				Scalar scalarb = cols.at(i).scalar(ptr_b,&endptr);
+				ptr_b = endptr;
+				int diff = scalara.compare(scalarb);
+				if(diff!=0) return diff;
+				}
+			if(!compare_for_leveldb) break;
+			//CONTINUE !
+			}
 		case OP_CODE_ROW_INDEX:
 			{
 			size_t linea=0UL;
 			size_t lineb=0UL;
-			ina.read((char*)&linea,sizeof(size_t));
-			inb.read((char*)&lineb,sizeof(size_t));
+			memcpy((void*)&linea,(const void*)ptr_a,sizeof(size_t));
+			memcpy((void*)&lineb,(const void*)ptr_b,sizeof(size_t));
 			if(linea<lineb) return -1;
 			if(linea>lineb) return 1;
-			return 0;
+			THROW("Illegal state");
 			}
 		default: 
 			{
@@ -347,12 +365,10 @@ void PivotComparator::FindShortSuccessor(std::string*) const {}
 	
 void Pivot::readData(std::istream& in)
 	{
-	OperatorRowIndex rowIndex;
-	char opcode= OP_CODE_ROW_INDEX;
 	size_t nLine=0UL;
 	std::string line;
 	std::vector<size_t> tokens;
-	this->comparator = new PivotComparator(this);
+	this->comparator = new PivotComparator(this,true);
 	leveldb::Options options;
 	options.create_if_missing=true;
 	options.comparator = comparator;
@@ -371,49 +387,32 @@ void Pivot::readData(std::istream& in)
 	
 	while(getline(in,line,'\n'))
 		{
-		size_t i;
 		nLine++;
 		tokens.clear();
 
 
 		tokens.push_back(0UL);
-		for(i=0;i< line.size();++i)
+		for(size_t i=0;i< line.size();++i)
 			{
 			if(line[i]!='\t') continue;
 			line[i]='0';//set to EOS
 			tokens.push_back(i); 
 			}
+		/* build key of ROW */
+		char key[1+sizeof(size_t)];
+		key[0]=(char)OP_CODE_ROW_INDEX;
+		memcpy(&key[1],(const void*)&nLine,sizeof(size_t));
+		leveldb::Slice key1(key,1+sizeof(size_t));
 		
-		size_t tmp_size =tokens.size();
-		ostringstream datastr;
-		datastr.write("X",sizeof(char));
-		datastr.write((const char*)&tmp_size,sizeof(size_t));
-		for(i=0;i< tokens.size();++i)
-			{
-			tmp_size=tokens[i];
-			datastr.write((const char*)&tmp_size,sizeof(size_t));
-			}
-		tmp_size =line.size();
-		datastr.write((const char*)&tmp_size,sizeof(size_t));
-		datastr.write((const char*)line.c_str(),sizeof(char)*(line.size()+1));
+		/* build data for ROW */
+		char data='0';
+		leveldb::Slice data1(&data,1);
+
 		
-		
-		ostringstream keystr;
-		char ss[5];
-		ss[0]=OP_CODE_ROW_INDEX;
-		memcpy(&ss[1],(const void*)&nLine,sizeof(size_t));
-		//keystr.write((const char*)&opcode,sizeof(char));
-		//keystr.write((const char*)&nLine,sizeof(size_t));
-		
-		leveldb::Slice key(ss,5);
-		leveldb::Slice data(datastr.str());
-		
-		leveldb::Status status = db->Put(leveldb::WriteOptions(),key,data);
+		leveldb::Status status = db->Put(leveldb::WriteOptions(),key1,data1);
 		if(!status.ok())
 			{
-			ostringstream err;
-			err << "cannot insert " << line << endl;
-			throw std::runtime_error(err.str());
+			THROW( "cannot insert line " << nLine );
 			}
 		
 		for(int side=0;side<2;++side)
@@ -425,8 +424,7 @@ void Pivot::readData(std::istream& in)
 				{
 				if( tokens.size()<= columns.keys[i].column_index)
 					{
-					cerr << "BOUM" << endl;
-					exit(-1);
+					THROW("illegal state");
 					}
 				archetype->scalars.push_back(Scalar(
 					columns.keys[i].datatype,
@@ -435,7 +433,7 @@ void Pivot::readData(std::istream& in)
 				}
 			size_t len = sizeof(char)+sizeof(size_t)+archetype->sizeOf();
 			char* out=new char[len];
-			out[0]=(side==0?'A':'B');
+			out[0]=(char)(side==0?OP_CODE_LEFT:OP_CODE_TOP);
 			char* end_ptr= archetype->write(&out[1]);
 			memcpy(end_ptr,&nLine,sizeof(size_t));
 			
@@ -445,15 +443,13 @@ void Pivot::readData(std::istream& in)
 			leveldb::Status status = db->Put(leveldb::WriteOptions(),key2,data2);
 			if(!status.ok())
 				{
-				ostringstream err;
-				err << "cannot insert " << line << endl;
-				throw std::runtime_error(err.str());
+				THROW("cannot insert : " << line );
 				}
 			
 			delete archetype;
 			}
 		}
-	clog << "Inserted "<< rowIndex.nLine << " lines." << endl;
+	clog << "Inserted "<< nLine << " lines." << endl;
 	}
 
 Pivot::Pivot():db(0),comparator(0)
@@ -466,7 +462,7 @@ Pivot::~Pivot()
 	if(this->db!=0)
 		{
 		delete this->db;
-		leveldb::Env* env= leveldb::Env::Default();
+		//leveldb::Env* env= leveldb::Env::Default();
 		if(!this->tmpDir.empty())
 			{
 			Pivot::deleteDir(this->tmpDir.c_str());
@@ -583,11 +579,17 @@ int main(int argc,char** argv)
 	Pivot instance;
 	try
 		{
+		DEBUG("Hello");
 		return instance.instanceMain(argc,argv);
 		}
 	catch(exception err)
 		{
 		cerr << err.what() << endl;
+		return EXIT_FAILURE;
+		}
+	catch(...)
+		{
+		cerr << "Something wrong happended" << endl;
 		return EXIT_FAILURE;
 		}
 	}
