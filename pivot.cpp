@@ -415,7 +415,6 @@ void Pivot::readData(std::istream& in)
 			if( first_line_is_header)
 				{
 				for(size_t i=0;i< tokens.size();++i) headers.push_back(tokens[i]);
-				continue;
 				}
 			else
 				{
@@ -426,7 +425,19 @@ void Pivot::readData(std::istream& in)
 					headers.push_back(os.str());
 					}
 				}
-			continue;
+			for(int side=0;side<2;++side)
+				{
+				ColumnKeyList& columns=(side==0?this->leftcols:this->topcols);
+				for(size_t i=0;i< columns.keys.size();++i)
+					{
+					if(columns.keys.at(i).column_index>=headers.size())
+						{
+						THROW("Out of range for column");
+						}
+					columns.keys.at(i).label= (char*)headers.at(columns.keys.at(i).column_index).c_str();
+					}
+				}
+			if( first_line_is_header) continue;
 			}
 		else if(tokens.size()<headers.size())
 			{
