@@ -78,24 +78,13 @@ class Scalar
 		char* write(char* out) const;
 	};
 
-class Archetype
-	{
-	public:
-		std::vector<Scalar> scalars;
-		Archetype();
-		Archetype(const Archetype& cp);
-		~Archetype();
-		Archetype& operator=(const Archetype& cp);
-		int compare(const Archetype& cp) const;
-		std::size_t sizeOf() const;
-		char* write(char* out);
-	};
 
 typedef struct ColumnKey
 	{
 	int order;
 	size_t column_index;
 	DataType* datatype;
+	char *label;
 	char* parse(const char* arg);
 	Scalar scalar(const char* ptr,char** endptr);
 	}*ColumnKeyPtr;
@@ -111,6 +100,19 @@ typedef class ColumnKeyList
 		
 	}*ColumnKeyListPtr;
 
+class Archetype
+	{
+	public:
+		std::vector<Scalar> scalars;
+		Archetype();
+		Archetype(ColumnKeyList& keys,const char* p,char** endptr);
+		Archetype(const Archetype& cp);
+		~Archetype();
+		Archetype& operator=(const Archetype& cp);
+		int compare(const Archetype& cp) const;
+		std::size_t sizeOf() const;
+		char* write(char* out);
+	};
 
 
 
@@ -136,6 +138,7 @@ typedef class Pivot
   		ColumnKeyList leftcols;
 		ColumnKeyList topcols;
 		Scalar* observed;
+		bool first_line_is_header;
 		Pivot();
 		~Pivot();
 		void readData(std::istream& in);

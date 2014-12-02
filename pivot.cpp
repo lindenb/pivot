@@ -185,6 +185,18 @@ static DataType* TYPE_LONG = new  _LongType;
 Archetype::Archetype()
 	{
 	}
+	
+Archetype::Archetype(ColumnKeyList& cols,const char* ptr,char** endptr)
+	{
+	char* ptr_a=(char*)ptr;
+	for(size_t i=0;i< cols.size();++i)
+		{
+		this->scalars.push_back(cols.at(i).scalar(ptr_a,endptr));
+		ptr_a = *endptr;
+		}
+	}
+
+	
 Archetype::Archetype(const Archetype& cp)
 	{
 	for(size_t i=0;i< cp.scalars.size();++i)
@@ -367,7 +379,7 @@ void Pivot::readData(std::istream& in)
 	{
 	size_t nLine=0UL;
 	std::string line;
-	std::vector<size_t> tokens;
+	std::vector<string> tokens;
 	this->comparator = new PivotComparator(this,true);
 	leveldb::Options options;
 	options.create_if_missing=true;
@@ -384,19 +396,41 @@ void Pivot::readData(std::istream& in)
 	this->tmpDir.assign(dir);
 	leveldb::Status s = leveldb::DB::Open(options,dir,&db);
 	delete [] dir;
-	
+	vector<string> headers;
 	while(getline(in,line,'\n'))
 		{
 		nLine++;
 		tokens.clear();
 
 
-		tokens.push_back(0UL);
 		for(size_t i=0;i< line.size();++i)
 			{
-			if(line[i]!='\t') continue;
-			line[i]='0';//set to EOS
-			tokens.push_back(i); 
+			size_t j=i;
+			while(j<line.size() && line[j]!='\t') ++j;
+			tokens.push_back(line.substr(i,j-i));
+			i=j+1;
+			}
+		if(nLine==1UL)
+			{
+			if( first_line_is_header)
+				{
+				for(size_t i=0;i< tokens.size();++i) headers.push_back(tokens[i]);
+				continue;
+				}
+			else
+				{
+				for(size_t i=0;i< tokens.size();++i)
+					{
+					ostringstream os;
+					os << "$"<<(i+1);
+					headers.push_back(os.str());
+					}
+				}
+			continue;
+			}
+		else if(tokens.size()<headers.size())
+			{
+			THROW("inconsistent number of columns");
 			}
 		/* build key of ROW */
 		char key[1+sizeof(size_t)];
@@ -452,7 +486,7 @@ void Pivot::readData(std::istream& in)
 	clog << "Inserted "<< nLine << " lines." << endl;
 	}
 
-Pivot::Pivot():db(0),comparator(0)
+Pivot::Pivot():db(0),first_line_is_header(true),comparator(0)
 	{
 	}
 
